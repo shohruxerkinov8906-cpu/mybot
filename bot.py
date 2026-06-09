@@ -19,8 +19,13 @@ c.execute('''CREATE TABLE IF NOT EXISTS users (
     invited_by INTEGER DEFAULT NULL,
     rewarded INTEGER DEFAULT 0,
     blocked INTEGER DEFAULT 0,
+    ever_subscribed INTEGER DEFAULT 0,
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )''')
+try:
+    c.execute("ALTER TABLE users ADD COLUMN ever_subscribed INTEGER DEFAULT 0")
+except:
+    pass
 conn.commit()
 
 def is_subscribed(user_id):
@@ -116,11 +121,12 @@ def start(msg):
             invited_by = int(args[1])
         except:
             pass
-    is_new = not user_exists(uid)
     add_user(uid, invited_by)
     if not is_subscribed(uid):
         show_subscribe(uid)
     else:
+        c.execute("UPDATE users SET ever_subscribed=1 WHERE user_id=?", (uid,))
+        conn.commit()
         show_main(uid)
 
 @bot.callback_query_handler(func=lambda c: c.data == "check")
@@ -129,6 +135,8 @@ def check_cb(call):
     if is_subscribed(uid):
         bot.answer_callback_query(call.id, "✅ Tasdiqlandi!")
         bot.delete_message(call.message.chat.id, call.message.message_id)
+        c.execute("UPDATE users SET ever_subscribed=1 WHERE user_id=?", (uid,))
+        conn.commit()
         show_main(uid)
     else:
         bot.answer_callback_query(call.id, "❌ Hali obuna bo'lmadingiz!", show_alert=True)
@@ -167,26 +175,27 @@ def statistics(msg):
     c.execute("SELECT COUNT(*) FROM users WHERE rewarded=1")
     rewarded = c.fetchone()[0]
 
-    active = total - blocked
+    c.execute("SELECT COUNT(*) FROM users WHERE ever_subscribed=0")
+    never_subscribed = c.fetchone()[0]
 
-    # Kanalda hali borlar
-    in_channel = 0
+    # Hozir kanalda borlar va chiqib ketganlar
+    currently_in = 0
     left_channel = 0
-    c.execute("SELECT user_id FROM users")
-    all_users = c.fetchall()
-    for (user_id,) in all_users:
+    c.execute("SELECT user_id FROM users WHERE ever_subscribed=1")
+    subscribed_users = c.fetchall()
+    for (user_id,) in subscribed_users:
         if is_subscribed(user_id):
-            in_channel += 1
+            currently_in += 1
         else:
             left_channel += 1
 
     bot.send_message(ADMIN_ID,
         f"📊 BOT STATISTIKASI\n\n"
         f"👥 Jami foydalanuvchilar: {total} ta\n"
-        f"✅ Faol foydalanuvchilar: {active} ta\n"
-        f"🚫 Botni bloklаganlar: {blocked} ta\n\n"
-        f"📢 Kanalda borlar: {in_channel} ta\n"
-        f"🚪 Kanaldan chiqqanlar: {left_channel} ta\n\n"
+        f"✅ Obuna bo'lganlar: {currently_in} ta\n"
+        f"❌ Obuna bo'lmaganlar: {never_subscribed} ta\n"
+        f"🚪 Chiqib ketganlar: {left_channel} ta\n"
+        f"🚫 Botni bloklаganlar: {blocked} ta\n"
         f"🎁 Yopiq kanalga qo'shilganlar: {rewarded} ta")
 
 @bot.my_chat_member_handler()
