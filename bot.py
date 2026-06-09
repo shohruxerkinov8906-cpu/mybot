@@ -100,7 +100,6 @@ def show_main(uid):
     link = f"https://t.me/{me.username}?start={uid}"
     kb_reply = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb_reply.add(types.KeyboardButton("Taklif havolam 🔗"))
-    kb_reply.add(types.KeyboardButton("🔄 Botni qayta ishga tushirish"))
     if uid == ADMIN_ID:
         kb_reply.add(types.KeyboardButton("📊 Statistika"))
     remaining = max(0, REQUIRED - count)
@@ -148,14 +147,6 @@ def check_cb(call):
         show_main(uid)
     else:
         bot.answer_callback_query(call.id, "❌ Hali obuna bo'lmadingiz!", show_alert=True)
-
-@bot.message_handler(func=lambda msg: msg.text == "🔄 Botni qayta ishga tushirish")
-def restart(msg):
-    uid = msg.from_user.id
-    if not is_subscribed(uid):
-        show_subscribe(uid)
-        return
-    show_main(uid)
 
 @bot.message_handler(func=lambda msg: msg.text == "Taklif havolam 🔗")
 def my_referral(msg):
