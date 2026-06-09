@@ -84,6 +84,13 @@ def show_subscribe(uid):
         reply_markup=kb,
         parse_mode="HTML")
 
+def share_text(link):
+    return (
+        f"https://t.me/share/url?url={link}"
+        f"&text=Zo%27r+bot+topib+oldim%21+Eng+yuqori+sifatli+"
+        f"musiqalar+bor+ekan.+Start+bosib+shartlarni+bajarishda+yordam+kerak"
+    )
+
 def show_main(uid):
     c.execute("SELECT ref_count, rewarded FROM users WHERE user_id=?", (uid,))
     row = c.fetchone()
@@ -93,6 +100,7 @@ def show_main(uid):
     link = f"https://t.me/{me.username}?start={uid}"
     kb_reply = types.ReplyKeyboardMarkup(resize_keyboard=True)
     kb_reply.add(types.KeyboardButton("Taklif havolam 🔗"))
+    kb_reply.add(types.KeyboardButton("🔄 Botni qayta ishga tushirish"))
     if uid == ADMIN_ID:
         kb_reply.add(types.KeyboardButton("📊 Statistika"))
     remaining = max(0, REQUIRED - count)
@@ -104,7 +112,7 @@ def show_main(uid):
     else:
         kb_inline = types.InlineKeyboardMarkup()
         kb_inline.add(types.InlineKeyboardButton("Do'stlarga ulashish♻️",
-            url=f"https://t.me/share/url?url={link}&text=Botga+qo%27shiling+va+yopiq+kanalga+kiring!"))
+            url=share_text(link)))
         bot.send_message(uid,
             f"Eng yuqori sifatli musiqalar joylangan yopiq kanalga qo'shilish uchun "
             f"botga {remaining} ta do'stingizni taklif qiling!",
@@ -141,6 +149,14 @@ def check_cb(call):
     else:
         bot.answer_callback_query(call.id, "❌ Hali obuna bo'lmadingiz!", show_alert=True)
 
+@bot.message_handler(func=lambda msg: msg.text == "🔄 Botni qayta ishga tushirish")
+def restart(msg):
+    uid = msg.from_user.id
+    if not is_subscribed(uid):
+        show_subscribe(uid)
+        return
+    show_main(uid)
+
 @bot.message_handler(func=lambda msg: msg.text == "Taklif havolam 🔗")
 def my_referral(msg):
     uid = msg.from_user.id
@@ -155,7 +171,7 @@ def my_referral(msg):
     bar, percent = get_progress_bar(min(count, REQUIRED), REQUIRED)
     kb = types.InlineKeyboardMarkup()
     kb.add(types.InlineKeyboardButton("Do'stlarga ulashish♻️",
-        url=f"https://t.me/share/url?url={link}&text=Botga+qo%27shiling+va+yopiq+kanalga+kiring!"))
+        url=share_text(link)))
     bot.send_message(uid,
         f"🔗 SIZNING SHAXSIY TAKLIF HAVOLANGIZ:\n\n"
         f"{link}\n\n"
@@ -178,7 +194,6 @@ def statistics(msg):
     c.execute("SELECT COUNT(*) FROM users WHERE ever_subscribed=0")
     never_subscribed = c.fetchone()[0]
 
-    # Hozir kanalda borlar va chiqib ketganlar
     currently_in = 0
     left_channel = 0
     c.execute("SELECT user_id FROM users WHERE ever_subscribed=1")
