@@ -28,6 +28,10 @@ except:
     pass
 conn.commit()
 
+# Broadcast uchun holatlar
+broadcast_state = {}
+broadcast_msg = {}
+
 def is_subscribed(user_id):
     try:
         m = bot.get_chat_member(CHANNEL, user_id)
@@ -91,6 +95,14 @@ def share_text(link):
         f"musiqalar+bor+ekan.+Start+bosib+shartlarni+bajarishda+yordam+kerak"
     )
 
+def get_main_keyboard(uid):
+    kb_reply = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    kb_reply.add(types.KeyboardButton("Taklif havolam 🔗"))
+    if uid == ADMIN_ID:
+        kb_reply.add(types.KeyboardButton("📊 Statistika"))
+        kb_reply.add(types.KeyboardButton("📨 Obunachilarga xabar yuborish"))
+    return kb_reply
+
 def show_main(uid):
     c.execute("SELECT ref_count, rewarded FROM users WHERE user_id=?", (uid,))
     row = c.fetchone()
@@ -98,16 +110,20 @@ def show_main(uid):
     rewarded = row[1] if row else 0
     me = bot.get_me()
     link = f"https://t.me/{me.username}?start={uid}"
-    kb_reply = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    kb_reply.add(types.KeyboardButton("Taklif havolam 🔗"))
-    if uid == ADMIN_ID:
-        kb_reply.add(types.KeyboardButton("📊 Statistika"))
+    kb_reply = get_main_keyboard(uid)
     remaining = max(0, REQUIRED - count)
+
     if rewarded:
-        bot.send_message(uid,
-            f"Tabriklaymiz 🥳 Siz 3 ta do'stingizni taklif qildingiz!\n\n"
-            f"Yopiq kanal havolasi:\n{PRIVATE_LINK}",
-            reply_markup=kb_reply)
+        if is_subscribed(uid):
+            bot.send_message(uid,
+                f"Siz yopiq kanalga qo'shilgansiz🙂\n\n{PRIVATE_LINK}",
+                reply_markup=kb_reply)
+        else:
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("@SATR_cha", url="https://t.me/SATR_cha"))
+            bot.send_message(uid,
+                "Iltimos, obunani tekshiring:",
+                reply_markup=kb)
     else:
         kb_inline = types.InlineKeyboardMarkup()
         kb_inline.add(types.InlineKeyboardButton("Do'stlarga ulashish♻️",
@@ -130,7 +146,15 @@ def start(msg):
             pass
     add_user(uid, invited_by)
     if not is_subscribed(uid):
-        show_subscribe(uid)
+        c.execute("SELECT rewarded FROM users WHERE user_id=?", (uid,))
+        row = c.fetchone()
+        rewarded = row[0] if row else 0
+        if rewarded:
+            kb = types.InlineKeyboardMarkup()
+            kb.add(types.InlineKeyboardButton("@SATR_cha", url="https://t.me/SATR_cha"))
+            bot.send_message(uid, "Iltimos, obunani tekshiring:", reply_markup=kb)
+        else:
+            show_subscribe(uid)
     else:
         c.execute("UPDATE users SET ever_subscribed=1 WHERE user_id=?", (uid,))
         conn.commit()
@@ -147,6 +171,58 @@ def check_cb(call):
         show_main(uid)
     else:
         bot.answer_callback_query(call.id, "❌ Hali obuna bo'lmadingiz!", show_alert=True)
+
+@bot.callback_query_handler(func=lambda c: c.data == "broadcast_send")
+def broadcast_send(call):
+    uid = call.from_user.id
+    if uid != ADMIN_ID:
+        return
+    bot.answer_callback_query(call.id)
+    bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
+    saved = broadcast_msg.get(uid)
+    if not saved:
+        bot.send_message(uid, "❌ Xabar topilmadi.")
+        return
+    c.execute("SELECT user_id FROM users WHERE blocked=0")
+    all_users = c.fetchall()
+    success = 0
+    fail = 0
+    for (user_id,) in all_users:
+        try:
+            fwd_type = saved['type']
+            fwd_msg = saved['message']
+            if fwd_type == 'text':
+                bot.send_message(user_id, fwd_msg.text)
+            elif fwd_type == 'photo':
+                bot.send_photo(user_id, fwd_msg.photo[-1].file_id, caption=fwd_msg.caption)
+            elif fwd_type == 'video':
+                bot.send_video(user_id, fwd_msg.video.file_id, caption=fwd_msg.caption)
+            elif fwd_type == 'audio':
+                bot.send_audio(user_id, fwd_msg.audio.file_id, caption=fwd_msg.caption)
+            elif fwd_type == 'document':
+                bot.send_document(user_id, fwd_msg.document.file_id, caption=fwd_msg.caption)
+            elif fwd_type == 'animation':
+                bot.send_animation(user_id, fwd_msg.animation.file_id, caption=fwd_msg.caption)
+            elif fwd_type == 'voice':
+                bot.send_voice(user_id, fwd_msg.voice.file_id)
+            elif fwd_type == 'sticker':
+                bot.send_sticker(user_id, fwd_msg.sticker.file_id)
+            success += 1
+        except:
+            fail += 1
+    broadcast_state.pop(uid, None)
+    broadcast_msg.pop(uid, None)
+    bot.send_message(uid, f"✅ Xabar yuborildi!\n\n📤 Muvaffaqiyatli: {success} ta\n❌ Yuborilmadi: {fail} ta")
+
+@bot.callback_query_handler(func=lambda c: c.data == "broadcast_cancel")
+def broadcast_cancel(call):
+    uid = call.from_user.id
+    if uid != ADMIN_ID:
+        return
+    bot.answer_callback_query(call.id)
+    broadcast_state.pop(uid, None)
+    broadcast_msg.pop(uid, None)
+    bot.edit_message_text("❌ Bekor qilindi.", call.message.chat.id, call.message.message_id)
 
 @bot.message_handler(func=lambda msg: msg.text == "Taklif havolam 🔗")
 def my_referral(msg):
@@ -175,16 +251,12 @@ def my_referral(msg):
 def statistics(msg):
     c.execute("SELECT COUNT(*) FROM users")
     total = c.fetchone()[0]
-
     c.execute("SELECT COUNT(*) FROM users WHERE blocked=1")
     blocked = c.fetchone()[0]
-
     c.execute("SELECT COUNT(*) FROM users WHERE rewarded=1")
     rewarded = c.fetchone()[0]
-
     c.execute("SELECT COUNT(*) FROM users WHERE ever_subscribed=0")
     never_subscribed = c.fetchone()[0]
-
     currently_in = 0
     left_channel = 0
     c.execute("SELECT user_id FROM users WHERE ever_subscribed=1")
@@ -194,7 +266,6 @@ def statistics(msg):
             currently_in += 1
         else:
             left_channel += 1
-
     bot.send_message(ADMIN_ID,
         f"📊 BOT STATISTIKASI\n\n"
         f"👥 Jami foydalanuvchilar: {total} ta\n"
@@ -203,6 +274,40 @@ def statistics(msg):
         f"🚪 Chiqib ketganlar: {left_channel} ta\n"
         f"🚫 Botni bloklаganlar: {blocked} ta\n"
         f"🎁 Yopiq kanalga qo'shilganlar: {rewarded} ta")
+
+@bot.message_handler(func=lambda msg: msg.text == "📨 Obunachilarga xabar yuborish" and msg.from_user.id == ADMIN_ID)
+def broadcast_start(msg):
+    uid = msg.from_user.id
+    broadcast_state[uid] = True
+    bot.send_message(uid, "📝 Obunachilarga yo'llash uchun xabar yuboring:")
+
+@bot.message_handler(func=lambda msg: broadcast_state.get(msg.from_user.id) and msg.from_user.id == ADMIN_ID,
+                     content_types=['text', 'photo', 'video', 'audio', 'document', 'animation', 'voice', 'sticker'])
+def broadcast_preview(msg):
+    uid = msg.from_user.id
+    if msg.content_type == 'text':
+        broadcast_msg[uid] = {'type': 'text', 'message': msg}
+    elif msg.content_type == 'photo':
+        broadcast_msg[uid] = {'type': 'photo', 'message': msg}
+    elif msg.content_type == 'video':
+        broadcast_msg[uid] = {'type': 'video', 'message': msg}
+    elif msg.content_type == 'audio':
+        broadcast_msg[uid] = {'type': 'audio', 'message': msg}
+    elif msg.content_type == 'document':
+        broadcast_msg[uid] = {'type': 'document', 'message': msg}
+    elif msg.content_type == 'animation':
+        broadcast_msg[uid] = {'type': 'animation', 'message': msg}
+    elif msg.content_type == 'voice':
+        broadcast_msg[uid] = {'type': 'voice', 'message': msg}
+    elif msg.content_type == 'sticker':
+        broadcast_msg[uid] = {'type': 'sticker', 'message': msg}
+    broadcast_state.pop(uid)
+    kb = types.InlineKeyboardMarkup()
+    kb.add(
+        types.InlineKeyboardButton("✅ Yuborish", callback_data="broadcast_send"),
+        types.InlineKeyboardButton("❌ Bekor qilish", callback_data="broadcast_cancel")
+    )
+    bot.send_message(uid, "Xabarni barcha obunachilarga yuborasizmi?", reply_markup=kb)
 
 @bot.my_chat_member_handler()
 def chat_member_update(update):
